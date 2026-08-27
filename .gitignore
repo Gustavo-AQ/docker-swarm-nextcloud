@@ -1,0 +1,9 @@
+# Vagrant
+.vagrant/
+
+# Environment
+service/.env
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
