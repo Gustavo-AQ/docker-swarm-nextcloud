@@ -40,9 +40,9 @@ O ambiente é composto por:
                              Data                       Data
 ```
 
-O nó `master` atua como **Manager do Swarm e servidor NFS**, enquanto os serviços da aplicação são executados pelos três workers.
+O nó `master` atua como **Manager do Swarm e servidor NFS**, enquanto os serviços da aplicação são distribuídos pelo Docker Swarm entre os nós Workers disponíveis.
 
-O manager utiliza:
+O Manager utiliza:
 
 ```bash
 docker node update --availability drain
@@ -54,6 +54,8 @@ para impedir a execução dos workloads da aplicação e permanecer dedicado ao 
 
 ```text
 .
+├── .gitattributes
+├── .gitignore
 ├── README.md
 ├── service
 │   ├── stack.yml
@@ -76,6 +78,8 @@ para impedir a execução dos workloads da aplicação e permanecer dedicado ao 
 | node02  | `10.10.10.102` | Worker              |
 | node03  | `10.10.10.103` | Worker              |
 
+As máquinas virtuais utilizam **Ubuntu 24.04** através da box `bento/ubuntu-24.04`.
+
 ## 🚀 Executando o projeto
 
 ### Pré-requisitos
@@ -86,36 +90,59 @@ para impedir a execução dos workloads da aplicação e permanecer dedicado ao 
 * Vagrant
 * Git
 
-Clone o repositório:
+Clone o repositório e acesse a pasta do projeto:
 
 ```bash
-git clone <URL_DO_REPOSITORIO>
+git clone https://github.com/Gustavo-AQ/docker-swarm-nextcloud.git
+cd docker-swarm-nextcloud
 ```
 
-Entre no diretório do cluster:
+### Configure as variáveis de ambiente
+
+A partir da raiz do repositório, entre no diretório da aplicação e crie o arquivo `.env` com base no exemplo:
 
 ```bash
-cd cluster-swarm
+cd service
+cp .env.example .env
 ```
 
-Suba as máquinas:
+Edite o arquivo `.env` e defina as credenciais desejadas.
+
+Depois, volte para a raiz do projeto e acesse o diretório do cluster:
 
 ```bash
-vagrant up
+cd ../cluster-swarm
+```
+
+### Inicialize o cluster
+
+Primeiro, inicialize o nó Manager:
+
+```bash
+vagrant up master
+```
+
+O Manager será responsável por criar o Docker Swarm, configurar o servidor NFS e gerar o comando utilizado pelos Workers para ingressar no cluster.
+
+Depois, inicialize os três Workers:
+
+```bash
+vagrant up node01 node02 node03
 ```
 
 O Vagrant irá:
 
 1. Criar as quatro máquinas virtuais;
-2. Instalar o Docker;
+2. Instalar o Docker e as dependências necessárias;
 3. Criar o Docker Swarm;
 4. Configurar o `master` como Manager;
-5. Adicionar os demais nós como Workers;
-6. Configurar o servidor NFS.
+5. Configurar o Manager com disponibilidade `Drain`;
+6. Configurar o servidor NFS;
+7. Adicionar os demais nós ao cluster como Workers.
 
 ## 🔍 Verificando o cluster
 
-Entre no manager:
+Entre no Manager:
 
 ```bash
 vagrant ssh master
@@ -127,7 +154,7 @@ Execute:
 docker node ls
 ```
 
-O resultado deverá mostrar:
+O resultado deverá mostrar uma estrutura semelhante a:
 
 ```text
 master    Ready    Drain     Leader
@@ -140,48 +167,34 @@ node03    Ready    Active
 
 Como Nextcloud e MariaDB precisam persistir dados, o projeto utiliza **NFS** para fornecer armazenamento compartilhado aos nós do cluster.
 
-Os diretórios exportados pelo manager são:
+Os diretórios exportados pelo Manager são:
 
 ```text
 /srv/nfs/nextcloud
 /srv/nfs/mariadb
 ```
 
-Dessa forma, os serviços continuam tendo acesso aos mesmos dados mesmo quando executados em diferentes workers.
+Dessa forma, os serviços continuam tendo acesso aos mesmos dados mesmo quando executados em diferentes Workers.
 
 > A configuração utilizada neste projeto foi criada para fins educacionais e de laboratório. Em ambientes de produção, permissões, redundância, alta disponibilidade e segurança do armazenamento devem receber configurações adicionais.
 
 ## 🐳 Implantando a aplicação
 
-Crie o arquivo `.env`:
-
-```bash
-cd service
-
-cp .env.example .env
-```
-
-Edite as credenciais conforme necessário.
-
-Depois entre no manager:
-
-```bash
-cd cluster-swarm
-
-vagrant ssh master
-```
-
-Carregue as variáveis:
+Dentro do Manager, acesse o diretório compartilhado da aplicação:
 
 ```bash
 cd /project/service
+```
 
+Carregue as variáveis de ambiente:
+
+```bash
 set -a
 source .env
 set +a
 ```
 
-Faça o deploy:
+Faça o deploy da Stack:
 
 ```bash
 docker stack deploy \
@@ -189,35 +202,46 @@ docker stack deploy \
   nextcloud
 ```
 
+Aguarde alguns instantes para que as imagens sejam baixadas e os serviços sejam inicializados.
+
 ## 🔍 Verificando os serviços
 
-```bash
-docker stack services nextcloud
-```
-
-Ou:
-
-```bash
-docker service ls
-```
-
-Para visualizar onde cada task está sendo executada:
+Acompanhe o estado das tasks:
 
 ```bash
 docker stack ps nextcloud
 ```
 
+Verifique os serviços da Stack:
+
+```bash
+docker stack services nextcloud
+```
+
+Ou visualize todos os serviços do Swarm:
+
+```bash
+docker service ls
+```
+
 ## 🌐 Acessando o Nextcloud
 
-Após a inicialização dos serviços, acesse:
+Após a inicialização dos serviços, acesse o Nextcloud através de um dos nós Workers:
 
 ```text
 http://10.10.10.101:8080
 ```
 
-Também é possível utilizar outro nó do cluster devido ao **routing mesh do Docker Swarm**.
+Como a porta é publicada através do **Routing Mesh do Docker Swarm**, também é possível utilizar os demais Workers:
+
+```text
+http://10.10.10.102:8080
+http://10.10.10.103:8080
+```
 
 ## 🛑 Removendo a Stack
+
+No Manager, execute:
 
 ```bash
 docker stack rm nextcloud
@@ -225,7 +249,13 @@ docker stack rm nextcloud
 
 ## 🛑 Desligando o ambiente
 
-No host:
+Saia da VM, caso ainda esteja conectado ao Manager:
+
+```bash
+exit
+```
+
+No host, dentro do diretório `cluster-swarm`, desligue as máquinas:
 
 ```bash
 vagrant halt
@@ -248,7 +278,7 @@ vagrant destroy -f
 * Nextcloud
 * MariaDB
 * Redis
-* Linux
+* Ubuntu 24.04
 
 ## 📚 Conceitos praticados
 
@@ -263,13 +293,13 @@ Durante o projeto foram aplicados conceitos como:
 * serviços distribuídos;
 * armazenamento compartilhado com NFS;
 * persistência de dados;
-* routing mesh;
+* Routing Mesh;
 * gerenciamento de nós;
 * isolamento de workloads.
 
 ## ⚠️ Observação
 
-O arquivo `worker.sh` pode conter o token utilizado para adicionar workers ao Docker Swarm.
+O arquivo `worker.sh` pode conter o token utilizado para adicionar Workers ao Docker Swarm.
 
 Neste projeto ele é mantido no repositório por se tratar de um **ambiente educacional e descartável**.
 
